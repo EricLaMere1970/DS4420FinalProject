@@ -11,18 +11,15 @@ For such a small island nation, it is surprising how wide the spectrum of local 
 ### Models
 Two machine learning approaches are implemented and compared:
 
-1. Naive Bayes Classifier (R)
+1. Gaussian Mixture Model (R)
 
-A Naive Bayes classifier is implemented in R to provide a simple probabilistic baseline model.
-Speech recordings are converted into acoustic feature vectors (e.g., MFCCs and other summary statistics), which are then used to estimate the probability of an accent class given the observed features.
-
-This model assumes feature independence and uses Gaussian likelihoods for continuous speech features.
+A Gaussian Mixture Model (GMM) will be implemented in R to model the distribution of acoustic speech features for each accent class. Audio recordings are converted into feature vectors (e.g., MFCCs), and the GMM represents each accent as a mixture of Gaussian components. During classification, the model assigns an accent based on which accent-specific distribution most likely generated the observed features.
 
 2. Convolutional Neural Network (Python)
 
 A Convolutional Neural Network (CNN) is implemented in Python as a more advanced model capable of learning spatial patterns from audio representations such as spectrograms. CNNs are commonly used in speech recognition tasks because they can automatically learn relevant acoustic features from raw or transformed audio data.
 
-The CNN model serves as a comparison to evaluate whether deep learning methods outperform the simpler probabilistic approach. 
+The CNN model serves as a comparison to evaluate whether deep learning methods outperform the bayesian modeling approach. 
 
 ### Data
 source: OpenSLR [https://openslr.org/83]
