@@ -27,12 +27,14 @@ Main metadata file: `line_index.tsv` (tab-separated)
 The dataset that we will be using is sourced from Open Speech and Language Resources (OpenSLR), a site devoted to hosting speech and language resources such as training corpora for speech recognition. The dataset includes crowdsourced UK and Ireland English speech data, which contains high quality audio recordings of English sentences spoken by volunteers speaking in different English dialects/accents. The dataset contains wave files and a TSV file (line_index.tsv). The data we will be using categorizes the accents: Irish, Midlands English, Northern English, Scottish, Southern English, and Welsh. All categories have both male and female recordings. Future iterations beyond the class project may use data that is even more regional (ex: Scouse, Geordie, London Cockney, etc). 
 
 ### Prerequisites
+We will be running the actual code in Google Colab to access GPU's and to also be able to host our data in Google Drive, since it would be cumbersome to commit the large data files into this repository
 
 ### Requirements
+Tbd
 
 ### Usage Workflow
 1. Download and extract the OpenSLR UK/Irish speech dataset into your local `data/` folder.
-2. Use `line_index.tsv` to map each audio file to its accent label.
-3. Run preprocessing/feature extraction, then train the Naive Bayes model (R) and CNN model (Python).
+2. Map speaker to a category in the dataset. Some speaker ID's can be in more than one category, will need to properly map.
+3. Run preprocessing/feature extraction, then train the GMM (R) and CNN model (Python).
 4. Compare model performance using the same test split and report key metrics (e.g., accuracy/F1).
 
