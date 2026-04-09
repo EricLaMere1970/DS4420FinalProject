@@ -1,0 +1,243 @@
+---
+title: "ML2 GMM"
+output: html_document
+date: "2026-04-08"
+---
+```{r}
+#install.packages("mclust")
+```
+
+```{r }
+library(mclust)
+```
+
+
+```{r}
+
+df <- read.csv("D:/Downloads/gmm_features.csv")
+
+cat("Shape:", nrow(df), "rows x", ncol(df), "columns\n\n")
+```
+
+```{r}
+
+df2 <- read.csv("D:/Downloads/gmm_features_20mfcc.csv")
+
+cat("Shape:", nrow(df2), "rows x", ncol(df2), "columns\n\n")
+```
+
+
+
+```{r}
+#Separate features from metadata
+feature_cols <- paste0("feat_", 1:120)
+X <- as.matrix(df2[, feature_cols])
+labels <- df2$accent
+speakers <- df2$speaker_id
+genders <- df2$gender
+
+cat("Feature matrix shape:", nrow(X), "x", ncol(X), "\n")
+cat("Quick stats on first 5 features:\n")
+print(summary(X[, 1:5]))
+
+```
+```{r}
+
+# Check for multi-accent speakers
+speaker_ids <- unique(df2$speaker_id)
+speaker_accent_list <- list()
+
+for (sid in speaker_ids) {
+  accents <- unique(df2$accent[df2$speaker_id == sid])
+  speaker_accent_list[[as.character(sid)]] <- accents
+}
+
+multi_accent_ids <- c()
+for (sid in names(speaker_accent_list)) {
+  if (length(speaker_accent_list[[sid]]) > 1) {
+    multi_accent_ids <- c(multi_accent_ids, as.integer(sid))
+  }
+}
+
+cat("Speakers in 1 accent: ", length(speaker_ids) - length(multi_accent_ids), "\n")
+cat("Speakers in 2+ accents:", length(multi_accent_ids), "\n\n")
+
+if (length(multi_accent_ids) > 0) {
+  cat("Multi-accent speakers:\n")
+  for (sid in multi_accent_ids) {
+    accents <- speaker_accent_list[[as.character(sid)]]
+    n <- sum(df2$speaker_id == sid)
+    cat(sprintf("  Speaker %d: %s (%d samples)\n", sid, paste(accents, collapse = ", "), n))
+  }
+}
+
+# Train/test split by speaker
+# Split by speaker_id so no speaker appears in both sets.
+# This prevents the model from learning voice identity vs accent.
+set.seed(42)
+
+unique_speakers <- unique(speakers)
+n_test <- round(length(unique_speakers) * 0.2)
+
+test_speaker_ids <- sample(unique_speakers, n_test)
+train_speaker_ids <- setdiff(unique_speakers, test_speaker_ids)
+
+train_mask <- speakers %in% train_speaker_ids
+test_mask <- speakers %in% test_speaker_ids
+
+X_train <- X[train_mask, ]
+X_test <- X[test_mask, ]
+y_train <- labels[train_mask]
+y_test <- labels[test_mask]
+speakers_test <- speakers[test_mask]
+genders_test <- genders[test_mask]
+
+overlap <- intersect(train_speaker_ids, test_speaker_ids)
+cat("Speaker overlap:", length(overlap), "(should be 0)\n")
+cat("Train:", nrow(X_train), "samples,", length(train_speaker_ids), "speakers\n")
+cat("Test: ", nrow(X_test), "samples,", length(test_speaker_ids), "speakers\n\n")
+cat("Train accent distribution:\n")
+print(table(y_train))
+cat("\nTest accent distribution:\n")
+print(table(y_test))
+```
+
+
+
+
+```{r}
+# Scale features
+
+train_means <- colMeans(X_train)
+train_sds <- apply(X_train, 2, sd)
+train_sds[train_sds == 0] <- 1
+
+X_train_scaled <- scale(X_train, center = train_means, scale = train_sds)
+X_test_scaled <- scale(X_test, center = train_means, scale = train_sds)
+
+cat("Scaling complete.\n")
+cat("Train scaled means (should be ~0):", round(mean(colMeans(X_train_scaled)), 6), "\n")
+cat("Train scaled sds (should be ~1):  ", round(mean(apply(X_train_scaled, 2, sd)), 6), "\n")
+```
+
+
+
+
+```{r}
+# Train one Bayesian GMM per accent
+accent_classes <- sort(unique(y_train))
+accent_gmms <- list()
+accent_priors <- list()
+total_train <- length(y_train)
+
+for (accent in accent_classes) {
+  cat("\nFitting GMM for:", accent, "...\n")
+
+  accent_data <- X_train_scaled[y_train == accent, ]
+  n_samples <- nrow(accent_data)
+
+  accent_priors[[accent]] <- 1 / length(accent_classes)
+
+  max_G <- min(16, floor(n_samples / 10))
+  max_G <- max(max_G, 2)
+
+  gmm_fit <- Mclust(accent_data, G = 1:max_G, modelNames = "VVI")
+
+  accent_gmms[[accent]] <- gmm_fit
+
+  cat("  Samples:", n_samples, "\n")
+  cat("  Components selected:", gmm_fit$G, "\n")
+  cat("  BIC:", round(gmm_fit$bic, 1), "\n")
+  cat("  Prior:", round(accent_priors[[accent]], 4), "\n")
+}
+
+cat("\nAll GMMs trained.\n")
+```
+
+```{r}
+#Predict accents on test set
+
+predict_accent <- function(X_test, accent_gmms, accent_priors, accent_classes) {
+  n_test <- nrow(X_test)
+  n_classes <- length(accent_classes)
+
+  log_scores <- matrix(0, nrow = n_test, ncol = n_classes)
+  colnames(log_scores) <- accent_classes
+
+  for (j in seq_along(accent_classes)) {
+    accent <- accent_classes[j]
+    gmm <- accent_gmms[[accent]]
+
+    densities <- dens(
+      modelName = gmm$modelName,
+      data = X_test,
+      parameters = gmm$parameters
+    )
+
+    log_likelihood <- log(densities + 1e-300)
+    log_prior <- log(accent_priors[[accent]])
+    log_scores[, j] <- log_likelihood + log_prior
+  }
+
+  pred_indices <- apply(log_scores, 1, which.max)
+  predictions <- accent_classes[pred_indices]
+
+  return(list(predictions = predictions, log_scores = log_scores))
+}
+
+results <- predict_accent(X_test_scaled, accent_gmms, accent_priors, accent_classes)
+y_pred <- results$predictions
+log_scores <- results$log_scores
+
+cat("Predictions complete.\n")
+cat("Sample predictions (first 10):\n")
+print(data.frame(true = y_test[1:10], predicted = y_pred[1:10]))
+```
+
+```{r}
+# Evaluation metrics
+accuracy <- mean(y_pred == y_test)
+
+cat("BAYESIAN GMM RESULTS\n")
+cat("Overall accuracy:", round(accuracy, 4), "\n\n")
+
+# Confusion matrix
+cm_table <- table(Predicted = factor(y_pred, levels = accent_classes),
+                  True = factor(y_test, levels = accent_classes))
+cat("Confusion matrix:\n")
+print(cm_table)
+
+# Per-class precision, recall, F1
+cat("\nPer-accent metrics:\n")
+cat(sprintf("%-12s  Precision  Recall  F1      Support\n", "Accent"))
+
+for (accent in accent_classes) {
+  tp <- sum(y_pred == accent & y_test == accent)
+  fp <- sum(y_pred == accent & y_test != accent)
+  fn <- sum(y_pred != accent & y_test == accent)
+
+  precision <- ifelse(tp + fp > 0, tp / (tp + fp), 0)
+  recall <- ifelse(tp + fn > 0, tp / (tp + fn), 0)
+  f1 <- ifelse(precision + recall > 0, 2 * precision * recall / (precision + recall), 0)
+  support <- sum(y_test == accent)
+
+  cat(sprintf("%-12s  %.4f     %.4f  %.4f  %d\n",
+              accent, precision, recall, f1, support))
+}
+
+```
+
+```{r}
+#Confusion matrix heatmap
+cm_matrix <- as.matrix(cm_table)
+
+heatmap(cm_matrix,
+        Rowv = NA, Colv = NA,
+        col = colorRampPalette(c("white", "steelblue"))(50),
+        scale = "none",
+        margins = c(8, 8),
+        main = "Bayesian GMM - Confusion Matrix (Counts)")
+```
+
+
+
