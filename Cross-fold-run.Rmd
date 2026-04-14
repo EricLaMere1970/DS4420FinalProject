@@ -1,0 +1,313 @@
+---
+title: "Cross Fold GMM in R"
+output: html_document
+date: "2026-04-09"
+---
+
+
+```{r}
+# Load data
+df <- read.csv("D:/Downloads/gmm_features_20mfcc.csv")
+
+df$gender <- gsub(".parquet", "", df$gender)
+cat("Shape:", nrow(df), "rows x", ncol(df), "columns\n")
+cat("\nAccent distribution:\n")
+print(table(df$accent))
+cat("\nGender distribution:\n")
+print(table(df$gender))
+```
+
+
+
+```{r}
+# Separate features from metadata
+feature_cols <- paste0("feat_", 1:120)
+X <- as.matrix(df[, feature_cols])
+labels <- df$accent
+speakers <- paste0(df$speaker_id, "_", df$accent)
+genders <- df$gender
+
+cat("Feature matrix:", nrow(X), "x", ncol(X), "\n")
+```
+
+
+```{r}
+
+# Manual multivariate Gaussian log-density
+# Computes log N(x mu, sigma^2) for diagonal covariance.
+#
+# log N(x | mu, sigma^2) = -0.5 * [ D*log(2*pi) + sum(log(sigma^2)) + sum((x - mu)^2 / sigma^2) ]
+
+log_gauss_density <- function(X, mu, sigma2) {
+  D <- length(mu)
+
+  const <- -0.5 * D * log(2 * pi)
+  log_det <- -0.5 * sum(log(sigma2))
+
+  diff <- sweep(X, 2, mu)
+  scaled <- sweep(diff^2, 2, sigma2, "/")
+  mahal <- -0.5 * rowSums(scaled)
+
+  return(const + log_det + mahal)
+}
+
+```
+
+```{r}
+# EM algorithm for diagonal-covariance GMM
+
+fit_gmm <- function(X, K, max_iter = 100, tol = 1e-4) {
+  N <- nrow(X)
+  D <- ncol(X)
+
+  init_idx <- sample(N, K)
+  means <- X[init_idx, , drop = FALSE]
+  vars <- matrix(1, nrow = K, ncol = D)
+  weights <- rep(1 / K, K)
+
+  prev_ll <- -Inf
+
+  for (iter in 1:max_iter) {
+
+# E step
+    log_resp <- matrix(0, nrow = N, ncol = K)
+    for (k in 1:K) {
+      log_resp[, k] <- log(weights[k]) + log_gauss_density(X, means[k, ], vars[k, ])
+    }
+
+    # Normalize with log-sum-exp
+    log_sum <- apply(log_resp, 1, function(row) {
+      m <- max(row)
+      m + log(sum(exp(row - m)))
+    })
+    resp <- exp(sweep(log_resp, 1, log_sum))
+    total_ll <- sum(log_sum)
+    if (abs(total_ll - prev_ll) < tol) break
+    prev_ll <- total_ll
+
+    # M step
+    Nk <- colSums(resp)
+
+    for (k in 1:K) {
+      if (Nk[k] < 1e-10) next
+
+      weights[k] <- Nk[k] / N
+      means[k, ] <- colSums(resp[, k] * X) / Nk[k]
+
+      diff <- sweep(X, 2, means[k, ])
+      vars[k, ] <- colSums(resp[, k] * diff^2) / Nk[k]
+      vars[k, ] <- pmax(vars[k, ], 1e-6)
+    }
+  }
+
+
+  return(list(
+    weights = weights,
+    means = means,
+    vars = vars,
+    K = K,
+    D = D,
+    log_likelihood = total_ll,
+    n_params = K * (1 + D + D) - 1
+  ))
+}
+
+```
+
+```{r}
+# BIC computation and model selection
+# BIC = -2 * log_likelihood + n_params * log(N)
+
+compute_bic <- function(model, N) {
+  return(-2 * model$log_likelihood + model$n_params * log(N))
+}
+
+select_best_gmm <- function(X, max_K, max_iter = 100) {
+  N <- nrow(X)
+  best_model <- NULL
+  best_bic <- Inf
+
+  for (K in 1:max_K) {
+    cat("    Trying K =", K, "...")
+    model <- fit_gmm(X, K, max_iter)
+    bic <- compute_bic(model, N)
+    cat("    BIC:", round(bic, 1), "\n")
+
+    if (bic < best_bic) {
+      best_bic <- bic
+      best_model <- model
+    }
+  }
+
+  cat("Best K:", best_model$K, "with BIC:", round(best_bic, 1), "\n")
+  return(list(model = best_model, bic = best_bic))
+}
+
+```
+
+
+
+```{r}
+# Compute log-likelihood of test data under a GMM
+# log P(X|model) = log(sum_k weight_k * N(X|mu_k, sigma_k^2))
+
+gmm_log_likelihood <- function(X, model) {
+  N <- nrow(X)
+  K <- model$K
+
+  log_weighted <- matrix(0, nrow = N, ncol = K)
+  for (k in 1:K) {
+    log_weighted[, k] <- log(model$weights[k]) + log_gauss_density(X, model$means[k, ], model$vars[k, ])
+  }
+
+  log_probs <- apply(log_weighted, 1, function(row) {
+    m <- max(row)
+    m + log(sum(exp(row - m)))
+  })
+
+  return(log_probs)
+}
+
+```
+
+
+
+```{r}
+#  Leave-one-speaker-out cross-validation
+# For each speaker: train on all other speakers, predict on held-out.
+# This gives the most reliable evaluation with only 32 speakers.
+
+unique_speakers <- unique(speakers)
+accent_classes <- sort(unique(labels))
+n_classes <- length(accent_classes)
+
+all_preds <- c()
+all_true <- c()
+all_speakers <- c()
+all_genders <- c()
+all_log_scores <- matrix(nrow = 0, ncol = n_classes)
+colnames(all_log_scores) <- accent_classes
+
+for (fold in seq_along(unique_speakers)) {
+  held_out <- unique_speakers[fold]
+  train_mask <- speakers != held_out
+  test_mask <- speakers == held_out
+
+  X_train <- X[train_mask, ]
+  X_test <- X[test_mask, , drop = FALSE]
+  y_train <- labels[train_mask]
+  y_test_fold <- labels[test_mask]
+
+  train_means <- colMeans(X_train)
+  train_sds <- apply(X_train, 2, sd)
+  train_sds[train_sds == 0] <- 1
+
+  X_train_scaled <- scale(X_train, center = train_means, scale = train_sds)
+  X_test_scaled <- scale(X_test, center = train_means, scale = train_sds)
+
+  # Train one GMM per accent
+  fold_gmms <- list()
+  fold_priors <- list()
+
+  for (accent in accent_classes) {
+    accent_data <- X_train_scaled[y_train == accent, ]
+    n_samples <- nrow(accent_data)
+
+    fold_priors[[accent]] <- 1 / n_classes
+
+    max_K <- min(16, floor(n_samples / 10))
+    max_K <- max(max_K, 2)
+
+    result <- select_best_gmm(accent_data, max_K)
+    fold_gmms[[accent]] <- result$model
+  }
+
+  # Predict on held-out speaker
+  n_test_fold <- nrow(X_test_scaled)
+  log_scores_fold <- matrix(0, nrow = n_test_fold, ncol = n_classes)
+  colnames(log_scores_fold) <- accent_classes
+
+  for (j in seq_along(accent_classes)) {
+    accent <- accent_classes[j]
+    log_ll <- gmm_log_likelihood(X_test_scaled, fold_gmms[[accent]])
+    log_prior <- log(fold_priors[[accent]])
+    log_scores_fold[, j] <- log_ll + log_prior
+  }
+
+  pred_indices <- apply(log_scores_fold, 1, which.max)
+  fold_preds <- accent_classes[pred_indices]
+
+  # Store results
+  all_preds <- c(all_preds, fold_preds)
+  all_true <- c(all_true, y_test_fold)
+  all_speakers <- c(all_speakers, rep(held_out, n_test_fold))
+  all_genders <- c(all_genders, genders[test_mask])
+  all_log_scores <- rbind(all_log_scores, log_scores_fold)
+
+  cat("  Speaker", held_out, ":", sum(fold_preds == y_test_fold),
+      "/", length(y_test_fold), "correct\n")
+}
+
+y_test <- all_true
+y_pred <- all_preds
+speakers_test <- all_speakers
+genders_test <- all_genders
+log_scores <- all_log_scores
+
+cat("Total predictions:", length(y_pred))
+```
+
+
+
+
+```{r}
+# Evaluation metrics
+accuracy <- mean(y_pred == y_test)
+
+cat("BAYESIAN GMM RESULTS:\n")
+cat("Overall accuracy:", round(accuracy, 4), "\n\n")
+
+# Confusion matrix
+cm_table <- table(Predicted = factor(y_pred, levels = accent_classes),
+                  True = factor(y_test, levels = accent_classes))
+cat("Confusion matrix:\n")
+print(cm_table)
+
+# Per-class precision, recall, F1
+cat("\nPer-accent metrics:\n")
+cat(sprintf("%-12s  Precision  Recall  F1      Support\n", "Accent"))
+cat("---------------------------------------------------\n")
+
+for (accent in accent_classes) {
+  tp <- sum(y_pred == accent & y_test == accent)
+  fp <- sum(y_pred == accent & y_test != accent)
+  fn <- sum(y_pred != accent & y_test == accent)
+
+  precision <- ifelse(tp + fp > 0, tp / (tp + fp), 0)
+  recall <- ifelse(tp + fn > 0, tp / (tp + fn), 0)
+  f1 <- ifelse(precision + recall > 0, 2 * precision * recall / (precision + recall), 0)
+  support <- sum(y_test == accent)
+
+  cat(sprintf("%-12s  %.4f     %.4f  %.4f  %d\n",
+              accent, precision, recall, f1, support))
+}
+```
+
+```{r}
+# Confusion matrix heatmap
+
+cm_matrix <- as.matrix(cm_table)
+
+heatmap(cm_matrix,
+        Rowv = NA, Colv = NA,
+        scale = "none",
+        margins = c(8, 8),
+        main = "Confusion Matrix")
+```
+
+
+
+
+
+
+
