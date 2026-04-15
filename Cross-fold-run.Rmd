@@ -7,7 +7,7 @@ date: "2026-04-09"
 References: 
 Bishop, C.M. (2006). Pattern Recognition and Machine Learning, Chapter 9 (Mixture Models and EM) and Chapter 4.4.1 (Model comparison and BIC). Available at https://www.microsoft.com/en-us/research/publication/pattern-recognition-machine-learning/
 
-https://stanfordphd.com/BIC.html#:~:text=BIC%20is%20given%20by%20the,score%20signals%20a%20better%20model.
+BIC reference: https://stanfordphd.com/BIC.html#:~:text=BIC%20is%20given%20by%20the,score%20signals%20a%20better%20model.
 
 
 ```{r}
