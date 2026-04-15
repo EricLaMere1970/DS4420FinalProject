@@ -23,7 +23,7 @@ The CNN model serves as a comparison to evaluate whether deep learning methods o
 
 ### Data
 source: OpenSLR [https://openslr.org/83]
-Main metadata file: `line_index.tsv` (tab-separated)
+
 The dataset that we will be using is sourced from Open Speech and Language Resources (OpenSLR), a site devoted to hosting speech and language resources such as training corpora for speech recognition. The dataset includes crowdsourced UK and Ireland English speech data, which contains high quality audio recordings of English sentences spoken by volunteers speaking in different English dialects/accents. The dataset contains wave files and a TSV file (line_index.tsv). The data we will be using categorizes the accents: Irish, Midlands English, Northern English, Scottish, Southern English, and Welsh. All categories have both male and female recordings. Future iterations beyond the class project may use data that is even more regional (ex: Scouse, Geordie, London Cockney, etc). 
 
 ### Prerequisites
