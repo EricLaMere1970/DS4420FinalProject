@@ -29,8 +29,6 @@ The dataset that we will be using is sourced from Open Speech and Language Resou
 ### Prerequisites
 We will be running the actual code in Google Colab to access GPU's and to also be able to host our data in Google Drive, since it would be cumbersome to commit the large data files into this repository
 
-### Requirements
-Tbd
 
 ### Usage Workflow
 1. Download and extract the OpenSLR UK/Irish speech dataset into your local `data/` folder.
